@@ -1,0 +1,8 @@
+torch
+unsloth
+ultralytics
+streamlit
+opencv-python
+pillow
+datasets
+transformers
