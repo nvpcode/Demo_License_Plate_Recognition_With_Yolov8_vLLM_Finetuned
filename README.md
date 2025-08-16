@@ -34,9 +34,18 @@ Dự án này gồm 3 phần:
 ```
 ---
 
+## 📦 Yêu cầu hệ thống
+- **Python** >= 3.9  
+- **Phải có GPU** *(Cần cài phiên bản PyTorch GPU phù hợp với GPU của máy tính)
+
+---
+
 ## 📚 Cài đặt thư viện
 ```
-pip install -r requirements.txt
+1. pip install -r requirements.txt
+2. pip install torch==2.8.0+cu128 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+3. pip install git+https://github.com/unslothai/unsloth.git
+4. pip install git+https://github.com/unslothai/unsloth_zoo.git
 ```
 
 ## ⚙️ 1. Huấn luyện mô hình YOLOv8
@@ -109,12 +118,6 @@ streamlit run main.py
 - Show bounding boxes: Hiển thị khung và text trên video.
 
 - Max plates per frame: Giới hạn số lượng biển số xử lý mỗi frame.
-
----
-
-## 📦 Yêu cầu hệ thống
-- **Python** >= 3.9  
-- **Phải có GPU** *(Cần cài phiên bản PyTorch GPU phù hợp với GPU của máy tính)
 
 ---
 
