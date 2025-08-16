@@ -35,7 +35,7 @@ Dự án này gồm 3 phần:
 ---
 
 ## 📦 Yêu cầu hệ thống
-- **Python** >= 3.9  
+- **Python** >= 3.10  
 - **Phải có GPU** *(Cần cài phiên bản PyTorch GPU phù hợp với GPU của máy tính)
 
 ---
