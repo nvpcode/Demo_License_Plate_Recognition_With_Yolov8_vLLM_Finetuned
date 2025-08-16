@@ -16,8 +16,7 @@ Dự án này gồm 3 phần:
 ## 💻 Demo trên Streamlit
 ### Lưu ý:
 - Lần chạy với ảnh đầu tiên sẽ chậm vì cần load các mô hình và từ các lần sau tốc độ xử lý rất nhanh!
-
-- ![Sample Image](results/result2.jpg)
+ ![Sample Image](results/result2.jpg)
 
 ---
 
