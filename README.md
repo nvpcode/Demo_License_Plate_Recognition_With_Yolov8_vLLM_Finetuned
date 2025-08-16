@@ -114,7 +114,7 @@ streamlit run main.py
 
 ## 📦 Yêu cầu hệ thống
 - **Python** >= 3.9  
-- **GPU có CUDA** *(khuyến nghị để chạy nhanh hơn)*
+- **Phải có GPU**
 
 ---
 
