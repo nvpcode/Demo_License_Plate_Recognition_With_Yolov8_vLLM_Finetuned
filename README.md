@@ -114,7 +114,7 @@ streamlit run main.py
 
 ## 📦 Yêu cầu hệ thống
 - **Python** >= 3.9  
-- **Phải có GPU**
+- **Phải có GPU** *(Cần cài phiên bản PyTorch GPU phù hợp với GPU của máy tính)
 
 ---
 
