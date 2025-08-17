@@ -7,6 +7,8 @@ from unsloth import FastVisionModel
 import numpy as np
 import re
 import threading
+import tempfile
+import os
 
 # ----------------------------
 # Helper: load models once
@@ -14,7 +16,7 @@ import threading
 @st.cache_resource
 def load_models(yolo_path="files_model/license_plate_detector_yolov8.pt", unsloth_path="files_model/unsloth_finetune"):
     yolo = YOLO(yolo_path)
-    ocr_model, ocr_tokenizer = FastVisionModel.from_pretrained(model_name=unsloth_path, load_in_4bit=True)
+    ocr_model, ocr_tokenizer = FastVisionModel.from_pretrained(model_name=unsloth_path, load_in_4bit=True, use_bfloat16=False)
     FastVisionModel.for_inference(ocr_model)
     return yolo, ocr_model, ocr_tokenizer
 
@@ -22,7 +24,7 @@ def load_models(yolo_path="files_model/license_plate_detector_yolov8.pt", unslot
 # Recognizer class (same logic as yours)
 # ----------------------------
 class LicensePlateRecognizer:
-    def __init__(self, yolo, ocr_model, ocr_tokenizer, device='cuda:0'):
+    def __init__(self, yolo, ocr_model, ocr_tokenizer, device="cuda"):
         self.yolo = yolo
         self.ocr_model = ocr_model
         self.ocr_tokenizer = ocr_tokenizer
@@ -30,7 +32,7 @@ class LicensePlateRecognizer:
 
     def detect_plates(self, image):
         # image: BGR numpy array
-        results = self.yolo(image)[0]
+        results = self.yolo.predict(image, device='cpu')[0]
         plates = []
         for box in results.boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -57,7 +59,7 @@ class LicensePlateRecognizer:
         input_text = self.ocr_tokenizer.apply_chat_template(messages, add_generation_prompt=True)
 
         inputs = self.ocr_tokenizer(pil_image, input_text, add_special_tokens=False, return_tensors="pt").to(self.device)
-        outputs = self.ocr_model.generate(**inputs, max_new_tokens=128, temperature=1.0, min_p=0.1)
+        outputs = self.ocr_model.generate(**inputs, max_new_tokens=32, temperature=1.0, min_p=0.1)
         output_text = self.ocr_tokenizer.decode(outputs[0], skip_special_tokens=True)
         return output_text.split("assistant")[-1].strip()
 
@@ -107,7 +109,7 @@ class VideoCaptureThread:
 # Streamlit UI
 # ----------------------------
 st.set_page_config(page_title="LPR - Real-time", page_icon="🚘", layout="wide")
-st.title("🚘 License Plate Recognition — Image & Real-time Stream")
+st.title("🚘 License Plate Recognition - Image & Real-time Stream")
 
 # Load models once
 with st.spinner("Loading models (YOLO + OCR)... this can take a while"):
@@ -115,13 +117,17 @@ with st.spinner("Loading models (YOLO + OCR)... this can take a while"):
     recognizer = LicensePlateRecognizer(yolo_model, ocr_model, ocr_tokenizer)
 
 st.sidebar.header("Mode")
-mode = st.sidebar.radio("Choose mode", ("Image Upload", "Webcam (local)", "RTSP / IP Camera"))
+mode = st.sidebar.radio("Choose mode", ("Image Upload", "Video Upload", "Webcam (local)", "RTSP / IP Camera"))
 
 # common controls
 display_fps = st.sidebar.checkbox("Show FPS", value=True)
 show_boxes = st.sidebar.checkbox("Show bounding boxes & text", value=True)
 max_boxes = st.sidebar.slider("Max plates to display per frame", 1, 10, 1)
+process_every_n_frame = st.sidebar.slider("Process every N-th frame (video)", 1, 30, 5)
 
+# ----------------------------
+# IMAGE UPLOAD
+# ----------------------------
 if mode == "Image Upload":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
     if uploaded_file is not None:
@@ -151,12 +157,90 @@ if mode == "Image Upload":
                     )
                 
                 elapsed = time.time() - start
-                print('\n⏱️ Thời gian xử lý tổng: {:02d}:{:02d}:{:02d}'.format(
+                st.write('\n⏱️ Thời gian xử lý: {:02d}:{:02d}:{:02d}'.format(
                     int(elapsed // 3600),
                     int((elapsed % 3600) // 60),
                     int(elapsed % 60)
                 ))
-                   
+
+# ----------------------------
+# VIDEO UPLOAD
+# ----------------------------
+elif mode == "Video Upload":
+    uploaded_video = st.file_uploader("Upload a video", type=["mp4", "avi", "mov", "mkv"])
+    if uploaded_video is not None:
+        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        tfile.write(uploaded_video.read())
+        tfile.flush()
+
+        cap = cv2.VideoCapture(tfile.name)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        # Hiển thị trạng thái xử lý
+        status_placeholder = st.empty()
+        status_placeholder.info("⏳ Đang xử lý video, vui lòng chờ...")
+
+        frame_count = 0
+        start_time = time.time()
+
+        # Bộ nhớ để tránh trùng
+        detected_plates = []       # lưu ảnh + text
+        seen_texts = set()         # chỉ lưu text duy nhất
+        plates = []
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_count += 1
+
+            if frame_count % process_every_n_frame == 0:
+                plates = recognizer.detect_plates(frame)
+                for (plate_img, (x1, y1, x2, y2)) in plates[:max_boxes]:
+                    text = recognizer.extract_text(plate_img)
+                    text_clean = recognizer.preprocess_plate_text(text)
+
+                    if text_clean.strip() != "":
+                        if text_clean not in seen_texts:
+                            seen_texts.add(text_clean)
+                            detected_plates.append((plate_img.copy(), text_clean))
+
+        cap.release()
+
+        # Hiển thị biển số theo dạng lưới gallery
+        if detected_plates:
+            st.markdown("### 🚘 Biển số nhận diện được")
+            cols_per_row = 4  # số cột mỗi hàng (tối ưu bề ngang)
+            rows = (len(detected_plates) + cols_per_row - 1) // cols_per_row
+            idx = 0
+            for r in range(rows):
+                cols = st.columns(cols_per_row)
+                for c in range(cols_per_row):
+                    if idx < len(detected_plates):
+                        plate_img, text_clean = detected_plates[idx]
+                        with cols[c]:
+                            st.image(
+                                cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB),
+                                caption=f"**{text_clean}**",
+                                use_container_width=True,
+                            )
+                        idx += 1
+
+        elapsed = time.time() - start_time
+        status_placeholder.success(
+            '\n⏱️ Thời gian xử lý: {:02d}:{:02d}:{:02d}'.format(
+                int(elapsed // 3600),
+                int((elapsed % 3600) // 60),
+                int(elapsed % 60),
+            )
+        )
+
+        print("\nDone!")
+
+
+# ----------------------------
+# Webcam (local), RTSP / IP Camera
+# ----------------------------                   
 elif mode in ("Webcam (local)", "RTSP / IP Camera"):
     if mode == "Webcam (local)":
         src = st.sidebar.text_input("Webcam index", "0")
@@ -220,7 +304,7 @@ elif mode in ("Webcam (local)", "RTSP / IP Camera"):
                     cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
                 # show frame
-                video_slot.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_column_width=True)
+                video_slot.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
 
                 # break if user pressed stop (Streamlit re-runs, so check session state)
                 time.sleep(0.03)
@@ -230,7 +314,7 @@ elif mode in ("Webcam (local)", "RTSP / IP Camera"):
 
 # Footer / tips
 st.markdown("---")
-st.write("**Tips:**")
-st.write("- For RTSP streams, use the camera's RTSP URL (often rtsp://user:pass@ip:554/...).")
-st.write("- Use GPU (PyTorch + CUDA) for faster OCR and YOLO inference. If no GPU, reduce frame rate.")
-st.write("- If the RTSP stream fails, try increasing the network timeout or checking credentials.")
+st.write("**Mẹo:**")
+st.write("- Với luồng RTSP, hãy sử dụng URL RTSP của camera (thường có dạng rtsp://user:pass@ip:554/...).")
+st.write("- Sử dụng GPU (PyTorch + CUDA) để OCR và YOLO chạy nhanh hơn. Nếu không có GPU, hãy giảm tốc độ khung hình.")
+st.write("- Nếu luồng RTSP bị lỗi, thử tăng thời gian chờ mạng hoặc kiểm tra thông tin đăng nhập.")
